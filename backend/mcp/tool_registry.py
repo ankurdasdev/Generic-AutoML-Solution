@@ -6,17 +6,16 @@ import json
 class MCPToolRegistry:
     def __init__(self):
         self.tools: Dict[str, Dict[str, Any]] = {}
+        self.loaded_models: Dict[str, Any] = {} # In-memory cache
 
     def register_challenge_tool(self, challenge_id: str, model_path: str, feature_cols: List[str]):
         """
-        Registers a trained micro-model as an MCP tool.
+        Registers a trained micro-model path. Model is loaded on-demand (Lazy Loading).
         """
-        model = joblib.load(model_path)
-        
         self.tools[challenge_id] = {
             "name": f"predict_{challenge_id.lower()}",
             "description": f"Predicts outcome for challenge {challenge_id}",
-            "model": model,
+            "model_path": model_path, # Store path, not object
             "feature_cols": feature_cols,
             "parameters": {
                 "type": "object",
@@ -48,27 +47,31 @@ class MCPToolRegistry:
             return {"error": f"Tool {tool_name} not found"}
 
         tool = self.tools[challenge_id]
-        model = tool["model"]
         feature_cols = tool["feature_cols"]
+
+        # Lazy Loading Logic
+        if challenge_id not in self.loaded_models:
+            print(f"Lazy loading model for {challenge_id} from {tool['model_path']}")
+            # Simple cache management: Clear if > 50 models to save RAM
+            if len(self.loaded_models) > 50:
+                self.loaded_models.clear()
+            
+            self.loaded_models[challenge_id] = joblib.load(tool["model_path"])
+
+        model = self.loaded_models[challenge_id]
 
         # Prepare data for inference
         df = pd.DataFrame(data_json)
         
-        # Ensure only relevant feature columns are used
-        # (Handling missing columns with 0 for robustness)
-        X = pd.DataFrame(index=df.index, columns=feature_cols).fillna(0)
-        for col in feature_cols:
-            if col in df.columns:
-                X[col] = df[col]
-
-        # One-hot encoding might be needed if trained that way
-        # For simplicity, we assume numeric features or handling in model pipeline
-        # (Better: Save a scikit-learn Pipeline with Scaler/Encoder)
-        
-        predictions = model.predict(X)
-        probabilities = []
-        if hasattr(model, "predict_proba"):
-            probabilities = model.predict_proba(X).tolist()
+        # In a Pipeline, we pass the raw DataFrame with required columns
+        # The Pipeline handles imputation and encoding
+        try:
+            predictions = model.predict(df[feature_cols])
+            probabilities = []
+            if hasattr(model, "predict_proba"):
+                probabilities = model.predict_proba(df[feature_cols]).tolist()
+        except Exception as e:
+            return {"error": f"Inference failed: {str(e)}", "status": "failed"}
 
         return {
             "challenge_id": challenge_id,

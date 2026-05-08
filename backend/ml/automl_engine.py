@@ -18,54 +18,76 @@ class AutoMLCompetition:
 
     def train_challenge(self, df: pd.DataFrame, target_col: str, problem_type: str) -> str:
         """
-        Runs competition between models and returns the champion model path.
+        Runs competition between pipelines and returns the champion pipeline path.
         """
+        from sklearn.pipeline import Pipeline
+        from sklearn.compose import ColumnTransformer
+        from sklearn.preprocessing import StandardScaler, OneHotEncoder
+        from sklearn.impute import SimpleImputer
+
         X = df.drop(columns=[target_col])
         y = df[target_col]
 
-        # Basic preprocessing (Handling categoricals for the generic solution)
-        X = pd.get_dummies(X)
-        
+        # Identify numeric and categorical features
+        numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+        categorical_features = X.select_dtypes(include=['object']).columns
+
+        # Define preprocessing for numeric columns (impute + scale)
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+
+        # Define preprocessing for categorical columns (impute + one-hot)
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore'))
+        ])
+
+        # Combine preprocessing into a ColumnTransformer
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numeric_transformer, numeric_features),
+                ('cat', categorical_transformer, categorical_features)
+            ])
+
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         models = self._get_model_candidates(problem_type)
-        best_model = None
+        best_pipeline = None
         best_score = -np.inf if problem_type == "classification" else np.inf
-        champion_run_id = None
 
         for name, model in models.items():
+            # Create a full pipeline
+            clf = Pipeline(steps=[('preprocessor', preprocessor),
+                                 ('classifier', model)])
+            
             with mlflow.start_run(run_name=name) as run:
-                model.fit(X_train, y_train)
+                clf.fit(X_train, y_train)
                 
                 # Evaluation
                 if problem_type == "classification":
-                    y_pred = model.predict(X_test)
+                    y_pred = clf.predict(X_test)
                     score = f1_score(y_test, y_pred, average='weighted')
                     mlflow.log_metric("f1_weighted", score)
-                    mlflow.log_metric("accuracy", accuracy_score(y_test, y_pred))
                     if score > best_score:
                         best_score = score
-                        best_model = model
-                        champion_run_id = run.info.run_id
+                        best_pipeline = clf
                 else:
-                    y_pred = model.predict(X_test)
+                    y_pred = clf.predict(X_test)
                     score = mean_squared_error(y_test, y_pred)
                     mlflow.log_metric("mse", score)
-                    mlflow.log_metric("r2", r2_score(y_test, y_pred))
                     if score < best_score:
                         best_score = score
-                        best_model = model
-                        champion_run_id = run.info.run_id
+                        best_pipeline = clf
                 
-                mlflow.sklearn.log_model(model, "model")
-                mlflow.log_param("problem_type", problem_type)
+                mlflow.sklearn.log_model(clf, "model")
 
-        # Register Champion
-        if best_model:
+        # Register Champion Pipeline
+        if best_pipeline:
             model_path = f"backend/models/champion_{self.experiment_name}.joblib"
             os.makedirs("backend/models", exist_ok=True)
-            joblib.dump(best_model, model_path)
-            print(f"Champion for {self.experiment_name} is {best_model.__class__.__name__} with score {best_score}")
+            joblib.dump(best_pipeline, model_path)
             return model_path
         
         return ""

@@ -14,28 +14,48 @@ class ChallengeAnalysis(BaseModel):
 class AnalysisOutput(BaseModel):
     analyses: List[ChallengeAnalysis]
 
+class DiscoveryOutput(BaseModel):
+    relevant_tables: List[str] = Field(description="List of table names identified as potentially relevant to the problem")
+    reasoning: str = Field(description="Explanation of why these tables were chosen")
+
 class MetadataAgent:
     def __init__(self, model_name: str = "gpt-4-turbo-preview"):
         self.llm = ChatOpenAI(model=model_name, temperature=0)
-        self.parser = ChatPromptTemplate.from_template(
-            "You are a Senior Data Scientist and AutoML Expert.\n"
-            "Analyze the following organization metadata and problem statement to identify the features needed for each challenge.\n\n"
-            "PROBLEM STATEMENT:\n{problem_statement}\n\n"
-            "CHALLENGES:\n{challenges}\n\n"
-            "ORG METADATA (JSON SCHEMA):\n{metadata}\n\n"
-            "For each challenge, identify relevant tables/columns and write a SQL query for Databricks.\n"
-            "The query should select the necessary features. DO NOT include the target column as it will be labeled later.\n"
-            "Decide if the challenge is a classification or regression problem."
-        )
 
-    async def analyze(self, problem_statement: str, challenges: List[str], metadata: Dict[str, Any]) -> AnalysisOutput:
-        prompt = self.parser.format_messages(
+    async def discover_relevant_tables(self, problem_statement: str, challenges: List[str], schema_summary: List[str]) -> DiscoveryOutput:
+        """
+        Stage 1: High-level table discovery to save tokens.
+        """
+        prompt = ChatPromptTemplate.from_template(
+            "You are an expert Data Architect. Given the problem and challenges, identify which tables are likely to contain the necessary data.\n\n"
+            "PROBLEM: {problem_statement}\n"
+            "CHALLENGES: {challenges}\n"
+            "AVAILABLE TABLES: {tables}\n\n"
+            "Return only the table names that are absolutely necessary."
+        ).format_messages(
             problem_statement=problem_statement,
             challenges=", ".join(challenges),
-            metadata=json.dumps(metadata, indent=2)
+            tables=", ".join(schema_summary)
         )
         
-        # We use a structured output approach
+        structured_llm = self.llm.with_structured_output(DiscoveryOutput)
+        return await structured_llm.ainvoke(prompt)
+
+    async def analyze_columns(self, problem_statement: str, challenges: List[str], detailed_metadata: Dict[str, Any]) -> AnalysisOutput:
+        """
+        Stage 2: Detailed column analysis and SQL generation for selected tables.
+        """
+        prompt = ChatPromptTemplate.from_template(
+            "You are a Senior Data Scientist. Analyze the detailed column metadata for selected tables and map them to challenges.\n\n"
+            "PROBLEM: {problem_statement}\n"
+            "CHALLENGES: {challenges}\n"
+            "DETAILED METADATA:\n{metadata}\n\n"
+            "Generate the SQL and mapping. Problem types must be 'classification' or 'regression'."
+        ).format_messages(
+            problem_statement=problem_statement,
+            challenges=", ".join(challenges),
+            metadata=json.dumps(detailed_metadata, indent=2)
+        )
+        
         structured_llm = self.llm.with_structured_output(AnalysisOutput)
-        response = await structured_llm.ainvoke(prompt)
-        return response
+        return await structured_llm.ainvoke(prompt)
