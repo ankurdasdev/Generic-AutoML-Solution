@@ -10,43 +10,39 @@ class DataProcessor:
 
     def run_queries_and_save(self, queries: Dict[str, str], connector: Any) -> str:
         """
-        Executes queries for each challenge and saves to a multi-sheet Excel.
+        Executes queries in batches to support high-scale data extraction.
+        Uses XlsxWriter memory optimization for large files.
         """
         file_path = os.path.join(self.output_dir, "training_data_template.xlsx")
-        writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+        
+        # Use a context manager to ensure the writer is closed properly
+        with pd.ExcelWriter(file_path, engine='xlsxwriter', engine_kwargs={'options': {'constant_memory': True}}) as writer:
+            for challenge_id, query in queries.items():
+                # For high-scale, we stream data in chunks from Databricks
+                # Here we simulate chunked processing for the template
+                chunks = connector.execute_query_stream(query, chunk_size=100000)
+                
+                start_row = 0
+                for i, chunk in enumerate(chunks):
+                    # Add Target column only to the first chunk's header
+                    if 'Target' not in chunk.columns:
+                        chunk['Target'] = ""
+                    
+                    # Write chunk to sheet
+                    chunk.to_excel(writer, sheet_name=challenge_id, index=False, startrow=start_row, header=(i == 0))
+                    start_row += len(chunk)
 
-        for challenge_id, query in queries.items():
-            # Execute query via connector (Databricks / Mock)
-            df = connector.execute_query(query)
-            
-            # Add Target column
-            df['Target'] = "" # Empty for human labeling
-            
-            # Write to sheet
-            df.to_excel(writer, sheet_name=challenge_id, index=False)
-            
-            # Optional: Add formatting to highlight the Target column
-            workbook = writer.book
-            worksheet = writer.sheets[challenge_id]
-            header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
-            target_format = workbook.add_format({'bg_color': '#FFC7CE', 'border': 1})
-            
-            # Format the 'Target' column (last column)
-            target_col_idx = len(df.columns) - 1
-            worksheet.set_column(target_col_idx, target_col_idx, 15, target_format)
-
-        writer.close()
         return file_path
 
 class MockConnector:
-    """Mock connector for initial development"""
+    """Mock connector with streaming support"""
     def execute_query(self, query: str) -> pd.DataFrame:
-        # Generate some dummy data based on query (very basic)
-        return pd.DataFrame({
-            "feature_1": [1.0, 2.0, 3.0],
-            "feature_2": [0.5, 1.5, 2.5],
-            "feature_3": ["A", "B", "A"]
-        })
+        return pd.DataFrame({"feat": [1], "Target": [""]})
+
+    def execute_query_stream(self, query: str, chunk_size: int = 1000):
+        # Simulate streaming two chunks of data
+        yield pd.DataFrame({"feature_1": range(chunk_size), "feature_2": [0.5]*chunk_size})
+        yield pd.DataFrame({"feature_1": range(chunk_size, chunk_size*2), "feature_2": [0.8]*chunk_size})
 
 class DatabricksConnector:
     def __init__(self, server_hostname: str, http_path: str, access_token: str):

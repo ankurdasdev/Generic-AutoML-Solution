@@ -16,11 +16,19 @@ import './App.css';
 
 // Mock Pages (Will separate into files later)
 const TrainingPage = () => {
-  const [thinkingLogs, setThinkingLogs] = useState([
-    { type: 'plan', text: 'Initialize Metadata Agent for analysis' },
-    { type: 'act', text: 'Fetching JSON Schema from Salesforce connector' },
-    { type: 'observe', text: 'Identified 4 core objects: Opportunity, Account, Lead, Task' }
-  ]);
+  const [thinkingLogs, setThinkingLogs] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    // Connect to real-time SSE logs
+    const eventSource = new EventSource('http://localhost:8000/training/logs');
+    
+    eventSource.onmessage = (event) => {
+      const newLog = JSON.parse(event.data);
+      setThinkingLogs(prev => [...prev, newLog]);
+    };
+
+    return () => eventSource.close();
+  }, []);
 
   return (
     <div className="page-content">

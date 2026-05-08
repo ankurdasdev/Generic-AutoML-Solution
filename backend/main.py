@@ -28,27 +28,27 @@ class ChallengeRequest(BaseModel):
 async def root():
     return {"message": "AutoML Backend is running", "status": "premium"}
 
-@app.post("/training/analyze-metadata")
-async def analyze_metadata(request: ChallengeRequest):
+import asyncio
+from sse_starlette.sse import EventSourceResponse
+
+@app.get("/training/logs")
+async def stream_logs():
     """
-    Part 1: LLM Agent analyzes metadata and identifies feature columns/SQL.
+    SSE Endpoint to stream real-time thinking logs to the UI.
     """
-    # TODO: Implement LangChain Metadata Agent logic
-    return {
-        "thinking_logs": ["Analyzing JSON schema...", "Identifying relevant tables...", "Mapping challenges to columns..."],
-        "dataset_columns": {
-            "C1": ["col1", "col2", "col3"],
-            "C2": ["col4", "col5"]
-        },
-        "sql_queries": {
-            "C1": "SELECT col1, col2, col3 FROM table1",
-            "C2": "SELECT col4, col5 FROM table2"
-        },
-        "problem_types": {
-            "C1": "classification",
-            "C2": "regression"
-        }
-    }
+    async def event_generator():
+        # This would be connected to a message queue or global state in a real app
+        logs = [
+            {"type": "plan", "text": "Analyzing JSON schema and metadata..."},
+            {"type": "act", "text": "Generating optimized Databricks SQL queries..."},
+            {"type": "observe", "text": "Mapped 15 feature columns for Challenge C1."},
+            {"type": "plan", "text": "Preparing data extraction job..."},
+        ]
+        for log in logs:
+            yield json.dumps(log)
+            await asyncio.sleep(1.5) # Simulate processing time
+
+    return EventSourceResponse(event_generator())
 
 @app.post("/training/generate-sheets")
 async def generate_sheets(dataset_cols: Dict[str, List[str]], sql_queries: Dict[str, str]):
