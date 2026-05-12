@@ -1,12 +1,17 @@
-from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_openai_functions_agent
+import os
+from langchain_groq import ChatGroq
+from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import tool
 from typing import List, Dict, Any
 
-class ProductionAgent:
-    def __init__(self, tool_registry: Any, model_name: str = "gpt-4-turbo-preview"):
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
+class InferenceAgent:
+    def __init__(self, tool_registry: Any):
+        self.llm = ChatGroq(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model_name=os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile"),
+            temperature=0
+        )
         self.tool_registry = tool_registry
         
         # Define the system prompt

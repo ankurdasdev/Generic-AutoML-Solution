@@ -1,15 +1,15 @@
 import json
 from typing import List, Dict, Any
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+from langchain_groq import ChatGroq
+from langchain_core.prompts import ChatPromptTemplate
 
 class ChallengeAnalysis(BaseModel):
     challenge_id: str
-    identified_columns: List[str] = Field(description="List of columns needed for this challenge")
-    sql_query: str = Field(description="SQL query to fetch these columns from the data lake")
-    problem_type: str = Field(description="classification or regression")
-    reasoning: str = Field(description="Brief explanation of why these columns were chosen")
+    feature_columns: List[str]
+    problem_type: str
+    sql_query: str
 
 class AnalysisOutput(BaseModel):
     analyses: List[ChallengeAnalysis]
@@ -19,8 +19,12 @@ class DiscoveryOutput(BaseModel):
     reasoning: str = Field(description="Explanation of why these tables were chosen")
 
 class MetadataAgent:
-    def __init__(self, model_name: str = "gpt-4-turbo-preview"):
-        self.llm = ChatOpenAI(model=model_name, temperature=0)
+    def __init__(self):
+        self.llm = ChatGroq(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model_name=os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile"),
+            temperature=0
+        )
 
     async def discover_relevant_tables(self, problem_statement: str, challenges: List[str], schema_summary: List[str]) -> DiscoveryOutput:
         """
@@ -41,19 +45,24 @@ class MetadataAgent:
         structured_llm = self.llm.with_structured_output(DiscoveryOutput)
         return await structured_llm.ainvoke(prompt)
 
-    async def analyze_columns(self, problem_statement: str, challenges: List[str], detailed_metadata: Dict[str, Any]) -> AnalysisOutput:
+    async def analyze_columns(self, problem_statement: str, challenges: List[str], user_context: str, detailed_metadata: Dict[str, Any]) -> AnalysisOutput:
         """
-        Stage 2: Detailed column analysis and SQL generation for selected tables.
+        Stage 2: Detailed column analysis incorporating user's specific dataset context.
         """
         prompt = ChatPromptTemplate.from_template(
-            "You are a Senior Data Scientist. Analyze the detailed column metadata for selected tables and map them to challenges.\n\n"
+            "You are a Senior Data Scientist. Analyze the metadata and map features to challenges.\n\n"
             "PROBLEM: {problem_statement}\n"
             "CHALLENGES: {challenges}\n"
+            "USER DATASET CONTEXT: {user_context}\n"
             "DETAILED METADATA:\n{metadata}\n\n"
-            "Generate the SQL and mapping. Problem types must be 'classification' or 'regression'."
+            "Tasks:\n"
+            "1. Identify relevant columns for each challenge based on the user's context.\n"
+            "2. Generate optimized Databricks SQL.\n"
+            "3. Provide reasoning for each feature chosen."
         ).format_messages(
             problem_statement=problem_statement,
             challenges=", ".join(challenges),
+            user_context=user_context,
             metadata=json.dumps(detailed_metadata, indent=2)
         )
         

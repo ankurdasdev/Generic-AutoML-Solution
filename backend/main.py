@@ -4,10 +4,26 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import os
 from dotenv import load_dotenv
+from services.data_fetcher import SalesforceFetcher
+from agents.metadata_agent import MetadataAgent
+from agents.drafter_agent import DrafterAgent
 
 load_dotenv()
 
 app = FastAPI(title="Generic AutoML Solution API")
+
+class DiscussionRequest(BaseModel):
+    history: List[Dict[str, str]]
+    user_input: str
+
+@app.post("/training/discuss")
+async def discuss_problem(request: DiscussionRequest):
+    """
+    Step 1: AI Agent discusses the problem statement and challenges with the user.
+    """
+    agent = DrafterAgent()
+    result = await agent.discuss(request.history, request.user_input)
+    return result
 
 # Configure CORS for premium frontend
 app.add_middleware(
@@ -28,27 +44,35 @@ class ChallengeRequest(BaseModel):
 async def root():
     return {"message": "AutoML Backend is running", "status": "premium"}
 
-import asyncio
-from sse_starlette.sse import EventSourceResponse
-
-@app.get("/training/logs")
-async def stream_logs():
+@app.get("/org/schema-summary")
+async def get_schema_summary():
     """
-    SSE Endpoint to stream real-time thinking logs to the UI.
+    Fetches a high-level list of available objects from the connected org.
     """
-    async def event_generator():
-        # This would be connected to a message queue or global state in a real app
-        logs = [
-            {"type": "plan", "text": "Analyzing JSON schema and metadata..."},
-            {"type": "act", "text": "Generating optimized Databricks SQL queries..."},
-            {"type": "observe", "text": "Mapped 15 feature columns for Challenge C1."},
-            {"type": "plan", "text": "Preparing data extraction job..."},
-        ]
-        for log in logs:
-            yield json.dumps(log)
-            await asyncio.sleep(1.5) # Simulate processing time
+    fetcher = SalesforceFetcher()
+    objects = fetcher.get_global_metadata()
+    if not objects:
+        # Fallback for demo if no credentials provided
+        return {"objects": ["Account", "Opportunity", "Contact", "Lead", "Task", "OpportunityHistory"]}
+    return {"objects": objects}
 
-    return EventSourceResponse(event_generator())
+@app.post("/training/discover-objects")
+async def discover_objects(request: ChallengeRequest):
+    """
+    Step 3: AI Agent identifies relevant objects based on problem statement and live schema.
+    """
+    fetcher = SalesforceFetcher()
+    schema_summary = fetcher.get_global_metadata()
+    if not schema_summary:
+        schema_summary = ["Account", "Opportunity", "Lead", "OpportunityHistory"]
+
+    agent = MetadataAgent()
+    result = await agent.discover_relevant_tables(
+        problem_statement=request.problem_statement,
+        challenges=request.challenges,
+        schema_summary=schema_summary
+    )
+    return result
 
 @app.post("/training/generate-sheets")
 async def generate_sheets(dataset_cols: Dict[str, List[str]], sql_queries: Dict[str, str]):

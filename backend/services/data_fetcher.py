@@ -2,6 +2,34 @@ import pandas as pd
 import xlsxwriter
 from typing import Dict, List, Any
 import os
+from simple_salesforce import Salesforce
+
+class SalesforceFetcher:
+    def __init__(self):
+        self.sf = None
+        self.is_connected = False
+        try:
+            self.sf = Salesforce(
+                username=os.getenv("SF_USERNAME"),
+                password=os.getenv("SF_PASSWORD"),
+                security_token=os.getenv("SF_SECURITY_TOKEN"),
+                domain='login'
+            )
+            self.is_connected = True
+        except Exception as e:
+            print(f"Salesforce Connection Error: {str(e)}")
+
+    def get_global_metadata(self) -> List[str]:
+        """Fetches all queryable objects."""
+        if not self.is_connected: return []
+        metadata = self.sf.describe()
+        return [obj['name'] for obj in metadata['sobjects'] if obj['queryable']]
+
+    def get_object_fields(self, object_name: str) -> List[Dict[str, str]]:
+        """Fetches fields for a specific object."""
+        if not self.is_connected: return []
+        desc = getattr(self.sf, object_name).describe()
+        return [{"name": f['name'], "type": f['type']} for f in desc['fields']]
 
 class DataProcessor:
     def __init__(self, output_dir: str = "backend/data/labeled"):
